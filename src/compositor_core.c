@@ -71,6 +71,8 @@ struct comp_server {
     void* frame_callback_data;
     comp_view_callback_t view_callback;
     void* view_callback_data;
+    comp_commit_callback_t commit_callback;
+    void* commit_callback_data;
     
     /* State */
     bool running;
@@ -205,6 +207,12 @@ bool comp_server_start(struct comp_server* server) {
         return false;
     }
     
+    /* Setup virtual keyboard AFTER backend started */
+    if (!comp_seat_setup_keyboard(&server->seat, server->backend)) {
+        wlr_log(WLR_ERROR, "Failed to setup virtual keyboard");
+        return false;
+    }
+    
     server->backend_started = true;
     server->running = true;
     
@@ -279,6 +287,31 @@ void comp_server_set_view_callback(struct comp_server* server,
     server->view_callback_data = user_data;
 }
 
+/* Set commit callback */
+void comp_server_set_commit_callback(struct comp_server* server,
+                                      comp_commit_callback_t callback,
+                                      void* user_data) {
+    if (!server) return;
+    server->commit_callback = callback;
+    server->commit_callback_data = user_data;
+}
+
+/* Notify frame commit - triggers Qt update */
+void comp_server_notify_frame_commit(struct comp_server* server) {
+    if (!server) return;
+    
+    /* Render and send frame_done to clients */
+    struct comp_output* output = comp_output_manager_get_primary(&server->output_manager);
+    if (output) {
+        comp_output_render_frame(output);
+    }
+    
+    /* Notify Qt */
+    if (server->commit_callback) {
+        server->commit_callback(server->commit_callback_data);
+    }
+}
+
 /* Get output */
 struct comp_output* comp_server_get_output(struct comp_server* server) {
     if (!server) return NULL;
@@ -326,6 +359,15 @@ void comp_view_set_position(struct comp_view* view, int32_t x, int32_t y) {
 void comp_view_set_size(struct comp_view* view, uint32_t width, uint32_t height) {
     if (!view || !view->xdg_toplevel) return;
     wlr_xdg_toplevel_set_size(view->xdg_toplevel, width, height);
+}
+
+/* Request view to resize - sends configure event */
+void comp_view_request_size(struct comp_view* view, uint32_t width, uint32_t height) {
+    if (!view || !view->xdg_toplevel) return;
+    wlr_xdg_toplevel_set_size(view->xdg_toplevel, width, height);
+    wlr_xdg_toplevel_set_fullscreen(view->xdg_toplevel, true);
+    /* Schedule configure to be sent */
+    wlr_xdg_surface_schedule_configure(view->xdg_toplevel->base);
 }
 
 /* Close view */
@@ -434,6 +476,16 @@ bool comp_view_render_to_buffer(struct comp_view* view, void* buffer,
     return true;
 }
 
+/* Trigger frame render and notify clients - call regularly from Qt timer */
+void comp_server_render_and_notify(struct comp_server* server) {
+    if (!server) return;
+    
+    struct comp_output* output = comp_output_manager_get_primary(&server->output_manager);
+    if (output) {
+        comp_output_render_frame(output);
+    }
+}
+
 /* Render full scene to buffer */
 bool comp_server_render_frame(struct comp_server* server, void* buffer,
                                uint32_t width, uint32_t height, uint32_t stride) {
@@ -445,6 +497,9 @@ bool comp_server_render_frame(struct comp_server* server, void* buffer,
     if (!output || !output->scene_output) {
         return false;
     }
+    
+    /* First, render the scene and send frame done to clients */
+    comp_output_render_frame(output);
     
     /* Build scene output state */
     struct wlr_scene_output_state_options options = {0};

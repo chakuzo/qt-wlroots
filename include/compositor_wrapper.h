@@ -43,6 +43,7 @@ public:
     Q_INVOKABLE QRect viewGeometry(int index) const;
     Q_INVOKABLE void focusView(int index);
     Q_INVOKABLE void closeView(int index);
+    Q_INVOKABLE void resizeView(int index, int width, int height);
     
     /* Get rendered frame for a specific view */
     QImage getViewFrame(int index);
@@ -72,6 +73,7 @@ private:
     /* Static callbacks for C interface */
     static void frameCallback(void* userData, uint32_t width, uint32_t height, void* buffer);
     static void viewCallback(void* userData, struct comp_view* view, bool added);
+    static void commitCallback(void* userData);
 
     /* Internal state */
     struct comp_server* m_server = nullptr;

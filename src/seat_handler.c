@@ -21,6 +21,8 @@
 
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_keyboard_group.h>
+#include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -161,6 +163,34 @@ bool comp_seat_init(struct comp_seat* seat, struct comp_server* server) {
     return true;
 }
 
+/* Setup virtual keyboard - call after backend started */
+bool comp_seat_setup_keyboard(struct comp_seat* seat, struct wlr_backend* backend) {
+    if (!seat || !seat->seat) return false;
+    
+    /* Create a virtual keyboard using wlr_keyboard_group 
+     * This allows us to have a keyboard with our keymap without
+     * a physical input device */
+    struct wlr_keyboard_group* kb_group = wlr_keyboard_group_create();
+    if (!kb_group) {
+        wlr_log(WLR_ERROR, "Failed to create keyboard group");
+        return false;
+    }
+    
+    seat->virtual_keyboard = &kb_group->keyboard;
+    
+    /* Set our keymap on the virtual keyboard */
+    wlr_keyboard_set_keymap(seat->virtual_keyboard, seat->xkb_keymap);
+    wlr_keyboard_set_repeat_info(seat->virtual_keyboard, 25, 600);
+    
+    /* Set as the seat's keyboard - this makes wlroots send the keymap to clients */
+    wlr_seat_set_keyboard(seat->seat, seat->virtual_keyboard);
+    
+    wlr_log(WLR_INFO, "Virtual keyboard group created and set");
+    
+    (void)backend;
+    return true;
+}
+
 /* Cleanup seat */
 void comp_seat_finish(struct comp_seat* seat) {
     if (!seat || !seat->initialized) return;
@@ -186,20 +216,31 @@ void comp_seat_focus_view(struct comp_seat* seat, struct comp_view* view) {
     }
     
     struct wlr_surface* surface = view->xdg_toplevel->base->surface;
+    struct wlr_surface* prev_surface = seat->seat->keyboard_state.focused_surface;
     
-    /* Get keyboard for modifiers */
-    struct wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat->seat);
-    
-    /* Send keyboard enter - CRITICAL for apps to receive input! */
-    if (keyboard) {
-        wlr_seat_keyboard_notify_enter(seat->seat, surface,
-            keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
-    } else {
-        /* No keyboard yet, still send enter with empty state */
-        wlr_seat_keyboard_notify_enter(seat->seat, surface, NULL, 0, NULL);
+    /* Skip if already focused */
+    if (prev_surface == surface) {
+        return;
     }
     
-    wlr_log(WLR_DEBUG, "Keyboard focus sent to surface");
+    /* CRITICAL: We need to send keymap to the client!
+     * Without a physical keyboard, we must do this manually via the keyboard_state */
+    
+    /* Get the keyboard state */
+    struct wlr_seat_keyboard_state* kb_state = &seat->seat->keyboard_state;
+    
+    /* Send keyboard enter with our XKB modifiers */
+    struct wlr_keyboard_modifiers mods = {
+        .depressed = xkb_state_serialize_mods(seat->xkb_state, XKB_STATE_MODS_DEPRESSED),
+        .latched = xkb_state_serialize_mods(seat->xkb_state, XKB_STATE_MODS_LATCHED),
+        .locked = xkb_state_serialize_mods(seat->xkb_state, XKB_STATE_MODS_LOCKED),
+        .group = xkb_state_serialize_layout(seat->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE),
+    };
+    
+    wlr_seat_keyboard_notify_enter(seat->seat, surface, NULL, 0, &mods);
+    
+    wlr_log(WLR_INFO, "Keyboard focus sent to surface %p (focused=%p)", 
+            (void*)surface, (void*)kb_state->focused_surface);
 }
 
 /* Get focused view */
@@ -226,13 +267,28 @@ struct comp_view* comp_seat_get_focused_view(struct comp_seat* seat) {
 void comp_seat_send_key(struct comp_seat* seat, uint32_t key, bool pressed) {
     if (!seat || !seat->seat) return;
     
+    /* Check if there's a focused surface */
+    if (!seat->seat->keyboard_state.focused_surface) {
+        wlr_log(WLR_DEBUG, "No focused surface for key event");
+        return;
+    }
+    
     /* Update XKB state */
     xkb_state_update_key(seat->xkb_state, key + 8, 
         pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
     
-    /* Send to focused client */
+    /* Send key to focused client */
     wlr_seat_keyboard_notify_key(seat->seat, get_time_msec(), key,
         pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
+    
+    /* Send updated modifiers */
+    struct wlr_keyboard_modifiers mods = {
+        .depressed = xkb_state_serialize_mods(seat->xkb_state, XKB_STATE_MODS_DEPRESSED),
+        .latched = xkb_state_serialize_mods(seat->xkb_state, XKB_STATE_MODS_LATCHED),
+        .locked = xkb_state_serialize_mods(seat->xkb_state, XKB_STATE_MODS_LOCKED),
+        .group = xkb_state_serialize_layout(seat->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE),
+    };
+    wlr_seat_keyboard_notify_modifiers(seat->seat, &mods);
 }
 
 /* Send modifier state */

@@ -10,7 +10,6 @@
 #include <QQuickWindow>
 #include <QImage>
 #include <QMutex>
-#include <QTimer>
 
 class CompositorWrapper;
 struct comp_view;
@@ -44,6 +43,7 @@ signals:
 public slots:
     void updateFrame();
     void onViewsChanged();
+    void onSizeChanged();
 
 protected:
     QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData* data) override;
@@ -71,7 +71,6 @@ private:
     QImage m_frameBuffer;
     QMutex m_bufferMutex;
     bool m_needsUpdate = false;
-    QTimer* m_frameTimer = nullptr;
 };
 
 #endif /* EMBEDDED_VIEW_H */

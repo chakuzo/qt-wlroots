@@ -18,6 +18,7 @@ extern "C" {
 
 struct comp_server;
 struct comp_view;
+struct wlr_backend;
 
 /* Seat state */
 struct comp_seat {
@@ -28,6 +29,9 @@ struct comp_seat {
     struct xkb_context* xkb_context;
     struct xkb_keymap* xkb_keymap;
     struct xkb_state* xkb_state;
+    
+    /* Virtual keyboard for sending keymap to clients */
+    struct wlr_keyboard* virtual_keyboard;
     
     /* Cursor state */
     double cursor_x, cursor_y;
@@ -42,6 +46,9 @@ struct comp_seat {
 
 /* Initialize seat */
 bool comp_seat_init(struct comp_seat* seat, struct comp_server* server);
+
+/* Setup virtual keyboard - call after backend started */
+bool comp_seat_setup_keyboard(struct comp_seat* seat, struct wlr_backend* backend);
 
 /* Cleanup seat */
 void comp_seat_finish(struct comp_seat* seat);

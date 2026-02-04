@@ -30,19 +30,15 @@ EmbeddedView::EmbeddedView(QQuickItem* parent)
         connect(s_compositor, &CompositorWrapper::viewsChanged,
                 this, &EmbeddedView::onViewsChanged);
         connect(s_compositor, &CompositorWrapper::frameReady,
-                this, &EmbeddedView::updateFrame);
+                this, &EmbeddedView::updateFrame, Qt::QueuedConnection);
     }
     
-    /* Frame update timer - poll for new frames */
-    m_frameTimer = new QTimer(this);
-    connect(m_frameTimer, &QTimer::timeout, this, &EmbeddedView::updateFrame);
-    m_frameTimer->start(16);  /* ~60fps */
+    /* Resize view when item size changes */
+    connect(this, &QQuickItem::widthChanged, this, &EmbeddedView::onSizeChanged);
+    connect(this, &QQuickItem::heightChanged, this, &EmbeddedView::onSizeChanged);
 }
 
 EmbeddedView::~EmbeddedView() {
-    if (m_frameTimer) {
-        m_frameTimer->stop();
-    }
 }
 
 void EmbeddedView::setCompositor(CompositorWrapper* compositor) {
@@ -71,6 +67,15 @@ void EmbeddedView::updateViewState() {
     if (hasView != m_hasView) {
         m_hasView = hasView;
         emit hasViewChanged();
+        
+        /* When view is assigned, resize it to our size */
+        if (m_hasView) {
+            int w = static_cast<int>(width());
+            int h = static_cast<int>(height());
+            if (w > 0 && h > 0) {
+                s_compositor->resizeView(m_viewIndex, w, h);
+            }
+        }
     }
     
     if (m_hasView) {
@@ -91,6 +96,17 @@ void EmbeddedView::onViewsChanged() {
     updateViewState();
 }
 
+void EmbeddedView::onSizeChanged() {
+    if (!m_hasView || !s_compositor) return;
+    
+    int w = static_cast<int>(width());
+    int h = static_cast<int>(height());
+    
+    if (w > 0 && h > 0) {
+        s_compositor->resizeView(m_viewIndex, w, h);
+    }
+}
+
 void EmbeddedView::updateFrame() {
     if (!m_hasView || !s_compositor) return;
     
@@ -98,6 +114,16 @@ void EmbeddedView::updateFrame() {
     QImage frame = s_compositor->getViewFrame(m_viewIndex);
     if (!frame.isNull() && frame.width() > 0 && frame.height() > 0) {
         QMutexLocker lock(&m_bufferMutex);
+        
+        /* Log size changes */
+        if (m_frameBuffer.isNull() || 
+            m_frameBuffer.width() != frame.width() || 
+            m_frameBuffer.height() != frame.height()) {
+            qDebug() << "View" << m_viewIndex << "frame size:" 
+                     << frame.width() << "x" << frame.height()
+                     << "item size:" << width() << "x" << height();
+        }
+        
         m_frameBuffer = frame.copy();  /* Deep copy */
         m_needsUpdate = true;
         update();
@@ -118,7 +144,22 @@ QSGNode* EmbeddedView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
         QSGTexture* texture = window()->createTextureFromImage(m_frameBuffer);
         if (texture) {
             node->setTexture(texture);
-            node->setRect(boundingRect());
+            
+            /* Calculate rect that maintains aspect ratio */
+            qreal imgW = m_frameBuffer.width();
+            qreal imgH = m_frameBuffer.height();
+            qreal itemW = width();
+            qreal itemH = height();
+            
+            qreal scale = qMin(itemW / imgW, itemH / imgH);
+            qreal scaledW = imgW * scale;
+            qreal scaledH = imgH * scale;
+            
+            /* Center the image */
+            qreal x = (itemW - scaledW) / 2.0;
+            qreal y = (itemH - scaledH) / 2.0;
+            
+            node->setRect(QRectF(x, y, scaledW, scaledH));
             node->markDirty(QSGNode::DirtyMaterial);
         }
     } else {

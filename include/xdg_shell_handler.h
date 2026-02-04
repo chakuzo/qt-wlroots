@@ -14,6 +14,7 @@ extern "C" {
 struct wlr_xdg_shell;
 struct wlr_xdg_toplevel;
 struct wlr_scene_tree;
+struct wlr_xdg_decoration_manager_v1;
 
 struct comp_server;
 struct comp_view;
@@ -21,8 +22,10 @@ struct comp_view;
 /* XDG shell state */
 struct comp_xdg_shell {
     struct wlr_xdg_shell* xdg_shell;
+    struct wlr_xdg_decoration_manager_v1* decoration_manager;
     struct wl_listener new_xdg_toplevel;
     struct wl_listener new_xdg_popup;
+    struct wl_listener new_decoration;
     struct comp_server* server;
 };
 

@@ -37,6 +37,7 @@ bool CompositorWrapper::initialize() {
     /* Set callbacks */
     comp_server_set_frame_callback(m_server, &CompositorWrapper::frameCallback, this);
     comp_server_set_view_callback(m_server, &CompositorWrapper::viewCallback, this);
+    comp_server_set_commit_callback(m_server, &CompositorWrapper::commitCallback, this);
     
     qDebug() << "Compositor initialized";
     return true;
@@ -69,10 +70,10 @@ bool CompositorWrapper::start() {
         m_notifier->setEnabled(true);
     }
     
-    /* Frame timer for consistent updates (60fps) */
+    /* Frame timer - just for event dispatching, not rendering */
     m_frameTimer = new QTimer(this);
     connect(m_frameTimer, &QTimer::timeout, this, &CompositorWrapper::onFrameTimer);
-    m_frameTimer->start(16);  /* ~60fps */
+    m_frameTimer->start(100);  /* 10Hz - just keep events flowing */
     
     m_running = true;
     emit runningChanged();
@@ -147,6 +148,12 @@ void CompositorWrapper::closeView(int index) {
     comp_view_close(m_views[index]);
 }
 
+void CompositorWrapper::resizeView(int index, int width, int height) {
+    if (index < 0 || index >= m_views.size()) return;
+    if (width <= 0 || height <= 0) return;
+    comp_view_request_size(m_views[index], (uint32_t)width, (uint32_t)height);
+}
+
 QImage CompositorWrapper::getViewFrame(int index) {
     if (index < 0 || index >= m_views.size()) return QImage();
     
@@ -156,22 +163,25 @@ QImage CompositorWrapper::getViewFrame(int index) {
     uint32_t width, height;
     comp_view_get_surface_size(view, &width, &height);
     
+    if (width == 0 || height == 0) {
+        /* Try geometry instead */
+        int32_t x, y;
+        comp_view_get_geometry(view, &x, &y, &width, &height);
+    }
+    
     if (width == 0 || height == 0) return QImage();
     
     /* Create buffer for rendering */
     QImage frame(width, height, QImage::Format_ARGB32);
-    frame.fill(Qt::black);
+    frame.fill(Qt::transparent);
     
-    /* Try to render view to buffer 
-     * Note: This currently returns false because wlroots doesn't easily
-     * support CPU readback. The actual rendering happens in the nested
-     * window managed by wlroots. For true embedded rendering, we'd need
-     * a headless backend with texture readback. */
+    /* Try to render view to buffer */
     if (comp_view_render_to_buffer(view, frame.bits(), width, height, frame.bytesPerLine())) {
         return frame;
     }
     
-    /* Return placeholder with view dimensions */
+    /* Fallback: Return empty frame with correct size - client might not have rendered yet */
+    frame.fill(QColor(30, 30, 30));
     return frame;
 }
 
@@ -214,6 +224,7 @@ void CompositorWrapper::onWaylandEvents() {
 
 void CompositorWrapper::onFrameTimer() {
     if (m_server) {
+        /* Just dispatch events - rendering is triggered by client commits */
         comp_server_dispatch_events(m_server);
         comp_server_flush_clients(m_server);
     }
@@ -249,4 +260,10 @@ void CompositorWrapper::viewCallback(void* userData, struct comp_view* view, boo
             qDebug() << "View removed, count:" << self->m_views.size();
         }
     }
+}
+
+void CompositorWrapper::commitCallback(void* userData) {
+    auto* self = static_cast<CompositorWrapper*>(userData);
+    /* Client committed new content - trigger Qt redraw */
+    emit self->frameReady();
 }

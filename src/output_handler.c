@@ -229,3 +229,19 @@ void comp_output_get_size(struct comp_output* output, uint32_t* width, uint32_t*
     if (width) *width = output->width;
     if (height) *height = output->height;
 }
+
+/* Manually trigger frame rendering - needed for headless backend */
+void comp_output_render_frame(struct comp_output* output) {
+    if (!output || !output->scene_output || !output->wlr_output) return;
+    
+    struct wlr_scene* scene = comp_server_get_scene(output->server);
+    if (!scene) return;
+    
+    /* Commit the scene to output */
+    if (wlr_scene_output_commit(output->scene_output, NULL)) {
+        /* Send frame done to all surfaces so clients render next frame */
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        wlr_scene_output_send_frame_done(output->scene_output, &now);
+    }
+}

@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/util/log.h>
@@ -186,12 +187,18 @@ static void handle_xdg_toplevel_commit(struct wl_listener* listener, void* data)
      * and we can send configure events */
     if (view->xdg_toplevel->base->initial_commit) {
         if (!view->pending_configure) {
-            /* Send initial configure now that surface is initialized */
-            wlr_xdg_toplevel_set_size(view->xdg_toplevel, 0, 0);
-            wlr_xdg_toplevel_set_activated(view->xdg_toplevel, false);
+            /* Send initial configure - use fullscreen to avoid ALL decorations */
+            wlr_xdg_toplevel_set_size(view->xdg_toplevel, 640, 480);
+            wlr_xdg_toplevel_set_fullscreen(view->xdg_toplevel, true);
+            wlr_xdg_toplevel_set_activated(view->xdg_toplevel, true);
             view->pending_configure = true;
-            wlr_log(WLR_DEBUG, "Sent initial configure after initial_commit");
+            wlr_log(WLR_DEBUG, "Sent initial configure (640x480 fullscreen) after initial_commit");
         }
+    }
+    
+    /* Notify that a frame was committed - trigger render */
+    if (view->mapped) {
+        comp_server_notify_frame_commit(view->server);
     }
 }
 
@@ -285,6 +292,18 @@ static void handle_new_xdg_popup(struct wl_listener* listener, void* data) {
     }
 }
 
+/* Handle new decoration request */
+static void handle_new_decoration(struct wl_listener* listener, void* data) {
+    struct comp_xdg_shell* shell = wl_container_of(listener, shell, new_decoration);
+    struct wlr_xdg_toplevel_decoration_v1* decoration = data;
+    
+    wlr_log(WLR_DEBUG, "New decoration request, setting server-side");
+    
+    /* Tell the client that the server will handle decorations (i.e., none) */
+    wlr_xdg_toplevel_decoration_v1_set_mode(decoration, 
+        WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+}
+
 /* Initialize XDG shell */
 bool comp_xdg_shell_init(struct comp_xdg_shell* shell, struct comp_server* server) {
     shell->server = server;
@@ -296,6 +315,15 @@ bool comp_xdg_shell_init(struct comp_xdg_shell* shell, struct comp_server* serve
     if (!shell->xdg_shell) {
         wlr_log(WLR_ERROR, "Failed to create xdg_shell");
         return false;
+    }
+    
+    /* Create decoration manager - tells clients not to draw decorations */
+    shell->decoration_manager = wlr_xdg_decoration_manager_v1_create(display);
+    if (shell->decoration_manager) {
+        shell->new_decoration.notify = handle_new_decoration;
+        wl_signal_add(&shell->decoration_manager->events.new_toplevel_decoration,
+                      &shell->new_decoration);
+        wlr_log(WLR_INFO, "XDG decoration manager created");
     }
     
     /* Listen for new toplevels */
@@ -315,6 +343,9 @@ void comp_xdg_shell_finish(struct comp_xdg_shell* shell) {
     if (!shell) return;
     wl_list_remove(&shell->new_xdg_toplevel.link);
     wl_list_remove(&shell->new_xdg_popup.link);
+    if (shell->decoration_manager) {
+        wl_list_remove(&shell->new_decoration.link);
+    }
 }
 
 /* Focus a view - CRITICAL for keyboard input */

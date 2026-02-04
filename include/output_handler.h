@@ -58,6 +58,9 @@ struct comp_output* comp_output_manager_get_primary(struct comp_output_manager* 
 /* Output operations */
 void comp_output_get_size(struct comp_output* output, uint32_t* width, uint32_t* height);
 
+/* Manually trigger frame rendering - needed for headless backend */
+void comp_output_render_frame(struct comp_output* output);
+
 #ifdef __cplusplus
 }
 #endif
