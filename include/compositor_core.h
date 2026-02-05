@@ -1,7 +1,11 @@
 /*
- * compositor_core.h - C wrapper for wlroots (MIT License compatible)
- * 
- * IMPORTANT: All functions use "comp_" prefix to avoid conflicts with wlr_*
+ * compositor_core.h - C API for wlroots-based Wayland compositor
+ *
+ * This header provides a C interface to the wlroots compositor functionality,
+ * designed to be easily wrapped by C++ (Qt) code.
+ *
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2024
  */
 #ifndef COMPOSITOR_CORE_H
 #define COMPOSITOR_CORE_H
@@ -28,8 +32,18 @@ typedef void (*comp_commit_callback_t)(void* user_data);
 struct comp_server* comp_server_create(void);
 void comp_server_destroy(struct comp_server* server);
 
-/* Initialize backend - MUST be called before start */
+/* Initialize backend - MUST be called before start 
+ * By default uses software rendering. Set WLROOTS_QT_HARDWARE=1 for GPU. */
 bool comp_server_init_backend(struct comp_server* server);
+
+/* Initialize with explicit renderer choice */
+bool comp_server_init_backend_with_renderer(struct comp_server* server, bool use_hardware);
+
+/* Check if hardware rendering is available */
+bool comp_server_hardware_available(void);
+
+/* Check if currently using hardware rendering */
+bool comp_server_is_hardware_rendering(struct comp_server* server);
 
 /* Start server - creates socket, starts event loop */
 bool comp_server_start(struct comp_server* server);

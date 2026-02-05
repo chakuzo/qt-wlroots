@@ -75,6 +75,7 @@ add_custom_target(generate_protocols DEPENDS ${PROTOCOL_HEADERS})
 # C sources - wlroots wrapper
 set(C_SOURCES
     src/compositor_core.c
+    src/render_backend.c
     src/xdg_shell_handler.c
     src/seat_handler.c
     src/output_handler.c
@@ -90,6 +91,7 @@ set(CXX_SOURCES
 # Headers
 set(HEADERS
     include/compositor_core.h
+    include/render_backend.h
     include/xdg_shell_handler.h
     include/seat_handler.h
     include/output_handler.h

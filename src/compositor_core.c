@@ -1,7 +1,10 @@
 /*
  * compositor_core.c - Compositor with headless backend for Qt embedding
- * 
- * Uses headless backend + pixman renderer so we can read pixels back to Qt
+ *
+ * Supports both software (Pixman) and hardware (GLES2) rendering backends.
+ *
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2024
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -9,6 +12,7 @@
 #include "xdg-shell-protocol.h"
 
 #include "compositor_core.h"
+#include "render_backend.h"
 #include "xdg_shell_handler.h"
 #include "seat_handler.h"
 #include "output_handler.h"
@@ -44,7 +48,10 @@ struct comp_server {
     struct wl_event_loop* event_loop;
     const char* socket;
     
-    /* wlroots backend - headless for embedded rendering */
+    /* Render backend (software or hardware) */
+    struct render_backend* render_backend;
+    
+    /* Legacy pointers for compatibility - point into render_backend */
     struct wlr_backend* backend;
     struct wlr_renderer* renderer;
     struct wlr_allocator* allocator;
@@ -77,6 +84,7 @@ struct comp_server {
     /* State */
     bool running;
     bool backend_started;
+    bool use_hardware_rendering;
 };
 
 /* Create server instance */
@@ -105,32 +113,42 @@ struct comp_server* comp_server_create(void) {
     return server;
 }
 
-/* Initialize backend - HEADLESS for embedding in Qt */
-bool comp_server_init_backend(struct comp_server* server) {
+/* Initialize backend with specified renderer type */
+bool comp_server_init_backend_with_renderer(struct comp_server* server, bool use_hardware) {
     if (!server) return false;
     
-    /* Create HEADLESS backend - no window, we render to buffers */
-    server->backend = wlr_headless_backend_create(server->event_loop);
-    if (!server->backend) {
-        wlr_log(WLR_ERROR, "Failed to create headless backend");
+    server->use_hardware_rendering = use_hardware;
+    
+    /* Determine backend type */
+    render_backend_type_t type = use_hardware ? 
+        RENDER_BACKEND_HARDWARE : RENDER_BACKEND_SOFTWARE;
+    
+    /* Check if hardware is actually available */
+    if (use_hardware && !render_backend_hardware_available()) {
+        wlr_log(WLR_INFO, "Hardware rendering requested but not available, using software");
+        type = RENDER_BACKEND_SOFTWARE;
+        server->use_hardware_rendering = false;
+    }
+    
+    /* Create render backend */
+    server->render_backend = render_backend_create(type, server->event_loop);
+    if (!server->render_backend) {
+        wlr_log(WLR_ERROR, "Failed to create render backend");
         return false;
     }
     
-    /* Create PIXMAN renderer for software rendering (CPU-readable) */
-    server->renderer = wlr_pixman_renderer_create();
-    if (!server->renderer) {
-        wlr_log(WLR_ERROR, "Failed to create pixman renderer");
+    /* Initialize renderer */
+    if (!render_backend_init_renderer(server->render_backend, server->display)) {
+        wlr_log(WLR_ERROR, "Failed to init renderer");
+        render_backend_destroy(server->render_backend);
+        server->render_backend = NULL;
         return false;
     }
     
-    wlr_renderer_init_wl_display(server->renderer, server->display);
-    
-    /* Create allocator */
-    server->allocator = wlr_allocator_autocreate(server->backend, server->renderer);
-    if (!server->allocator) {
-        wlr_log(WLR_ERROR, "Failed to create allocator");
-        return false;
-    }
+    /* Set convenience pointers */
+    server->backend = render_backend_get_wlr_backend(server->render_backend);
+    server->renderer = render_backend_get_renderer(server->render_backend);
+    server->allocator = render_backend_get_allocator(server->render_backend);
     
     /* Create scene graph */
     server->scene = wlr_scene_create();
@@ -179,8 +197,18 @@ bool comp_server_init_backend(struct comp_server* server) {
         return false;
     }
     
-    wlr_log(WLR_INFO, "Headless backend initialized with pixman renderer");
+    wlr_log(WLR_INFO, "Backend initialized: %s", 
+            server->use_hardware_rendering ? "Hardware (GLES2)" : "Software (Pixman)");
     return true;
+}
+
+/* Initialize backend - default to software rendering */
+bool comp_server_init_backend(struct comp_server* server) {
+    /* Check environment variable for hardware rendering */
+    const char* hw_env = getenv("WLROOTS_QT_HARDWARE");
+    bool use_hardware = hw_env && (strcmp(hw_env, "1") == 0 || strcmp(hw_env, "true") == 0);
+    
+    return comp_server_init_backend_with_renderer(server, use_hardware);
 }
 
 /* Start server */
@@ -231,9 +259,11 @@ void comp_server_destroy(struct comp_server* server) {
     comp_xdg_shell_finish(&server->xdg_shell);
     comp_output_manager_finish(&server->output_manager);
     
-    /* Destroy renderer */
-    if (server->renderer) {
-        wlr_renderer_destroy(server->renderer);
+    /* Destroy render backend */
+    if (server->render_backend) {
+        render_backend_destroy(server->render_backend);
+        server->render_backend = NULL;
+        server->renderer = NULL;  /* Was pointing into render_backend */
     }
     
     /* Destroy wayland display - cleans up everything else */
@@ -243,6 +273,16 @@ void comp_server_destroy(struct comp_server* server) {
     }
     
     free(server);
+}
+
+/* Check if hardware rendering is available */
+bool comp_server_hardware_available(void) {
+    return render_backend_hardware_available();
+}
+
+/* Check if currently using hardware rendering */
+bool comp_server_is_hardware_rendering(struct comp_server* server) {
+    return server ? server->use_hardware_rendering : false;
 }
 
 /* Get socket name */

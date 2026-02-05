@@ -1,5 +1,8 @@
 /*
  * compositor_wrapper.cpp - C++ wrapper implementation
+ *
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2024
  */
 #include "compositor_wrapper.h"
 #include "compositor_core.h"
@@ -16,8 +19,14 @@ CompositorWrapper::~CompositorWrapper() {
     stop();
 }
 
-bool CompositorWrapper::initialize() {
+bool CompositorWrapper::hardwareAvailable() {
+    return comp_server_hardware_available();
+}
+
+bool CompositorWrapper::initialize(bool useHardware) {
     qDebug() << "Initializing compositor...";
+    qDebug() << "Hardware acceleration:" << (useHardware ? "requested" : "not requested");
+    qDebug() << "Hardware available:" << hardwareAvailable();
     
     /* Create server */
     m_server = comp_server_create();
@@ -26,8 +35,8 @@ bool CompositorWrapper::initialize() {
         return false;
     }
     
-    /* Initialize backend */
-    if (!comp_server_init_backend(m_server)) {
+    /* Initialize backend with renderer choice */
+    if (!comp_server_init_backend_with_renderer(m_server, useHardware)) {
         emit error("Failed to initialize backend");
         comp_server_destroy(m_server);
         m_server = nullptr;
@@ -39,8 +48,13 @@ bool CompositorWrapper::initialize() {
     comp_server_set_view_callback(m_server, &CompositorWrapper::viewCallback, this);
     comp_server_set_commit_callback(m_server, &CompositorWrapper::commitCallback, this);
     
-    qDebug() << "Compositor initialized";
+    qDebug() << "Compositor initialized with" 
+             << (isHardwareRendering() ? "hardware" : "software") << "rendering";
     return true;
+}
+
+bool CompositorWrapper::isHardwareRendering() const {
+    return m_server ? comp_server_is_hardware_rendering(m_server) : false;
 }
 
 bool CompositorWrapper::start() {

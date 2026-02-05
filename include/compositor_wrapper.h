@@ -1,5 +1,11 @@
 /*
- * compositor_wrapper.h - C++ wrapper for Qt integration
+ * compositor_wrapper.h - Qt/C++ wrapper for the wlroots compositor
+ *
+ * Provides a QObject-based interface to integrate the Wayland compositor
+ * with Qt's event loop and signal/slot system.
+ *
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2024
  */
 #ifndef COMPOSITOR_WRAPPER_H
 #define COMPOSITOR_WRAPPER_H
@@ -23,20 +29,25 @@ class CompositorWrapper : public QObject {
     Q_PROPERTY(QString socketName READ socketName NOTIFY socketNameChanged)
     Q_PROPERTY(bool running READ isRunning NOTIFY runningChanged)
     Q_PROPERTY(int viewCount READ viewCount NOTIFY viewsChanged)
+    Q_PROPERTY(bool hardwareRendering READ isHardwareRendering NOTIFY hardwareRenderingChanged)
 
 public:
     explicit CompositorWrapper(QObject* parent = nullptr);
     ~CompositorWrapper() override;
 
-    /* Initialize and start compositor */
-    bool initialize();
+    /* Initialize compositor - optionally with hardware acceleration */
+    bool initialize(bool useHardware = false);
     bool start();
     void stop();
+    
+    /* Check if hardware acceleration is available */
+    static bool hardwareAvailable();
 
     /* Properties */
     QString socketName() const;
     bool isRunning() const;
     int viewCount() const;
+    bool isHardwareRendering() const;
 
     /* View access */
     Q_INVOKABLE QString viewTitle(int index) const;
@@ -64,6 +75,7 @@ signals:
     void viewRemoved(int index);
     void frameReady();
     void error(const QString& message);
+    void hardwareRenderingChanged();
 
 private slots:
     void onWaylandEvents();

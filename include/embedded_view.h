@@ -1,5 +1,11 @@
 /*
- * embedded_view.h - QML Item that displays a Wayland surface
+ * embedded_view.h - QML item for displaying Wayland surfaces
+ *
+ * EmbeddedView is a QQuickItem that renders a Wayland client surface
+ * and forwards input events back to the compositor.
+ *
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2024
  */
 #ifndef EMBEDDED_VIEW_H
 #define EMBEDDED_VIEW_H
